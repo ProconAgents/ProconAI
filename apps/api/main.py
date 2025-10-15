@@ -9,6 +9,68 @@ except Exception:  # SDK not installed or import error
     OpenAI = None
 
 app = FastAPI(title="ProconAI API")
+# --- Diagnostics ---
+@app.get("/diag")
+async def diag():
+    import importlib, os, sys
+    try:
+        sdk_found = importlib.util.find_spec("openai") is not None
+    except Exception as e:
+        sdk_found = False
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    return {
+        "openai_sdk_installed": sdk_found,
+        "api_key_found": bool(api_key),
+        "api_key_preview": (api_key[:8] + "...") if api_key else None,
+        "python_version": sys.version,
+    }
+from fastapi import HTTPException
+from pydantic import BaseModel
+
+class AdRequest(BaseModel):
+    product: str
+    tone: str | None = "friendly"
+
+@app.post("/ads/generate2")
+async def ads_generate2(req: AdRequest):
+    import os, traceback
+    debug = {}
+
+    # 1) Import SDK
+    try:
+        from openai import OpenAI
+        debug["sdk_imported"] = True
+    except Exception as e:
+        debug["sdk_import_error"] = str(e)
+        raise HTTPException(status_code=500, detail={"error": "Failed to import OpenAI SDK", "debug": debug})
+
+    # 2) Check API key
+    api_key = os.getenv("OPENAI_API_KEY")
+    debug["api_key_found"] = bool(api_key)
+    if not api_key:
+        raise HTTPException(status_code=500, detail={"error": "OPENAI_API_KEY not set in environment", "debug": debug})
+
+    # 3) Call OpenAI
+    try:
+        client = OpenAI(api_key=api_key)
+        prompt = f"Write a {req.tone or 'friendly'} 50-word ad for {req.product}."
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a concise creative ad generator."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.7,
+            max_tokens=180,
+        )
+        text = resp.choices[0].message.content
+        return {"ok": True, "text": text, "debug": debug}
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(tb)  # sends full traceback to Railway logs
+        raise HTTPException(status_code=500, detail={"error": str(e), "traceback": tb, "debug": debug})
+
 
 @app.get("/health")
 def health():
