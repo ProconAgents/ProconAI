@@ -4,3 +4,4 @@ python-dotenv
 sqlalchemy
 psycopg2-binary
 redis
+openai>=1.37.0
