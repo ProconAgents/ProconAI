@@ -30,20 +30,27 @@ class AdRequest(BaseModel):
 # Create the ad generation endpoint
 @app.post("/ads/generate")
 async def generate_ads(req: AdRequest):
-    openai.api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return {"error": "OPENAI_API_KEY not set in environment"}
     
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key)
+
     prompt = f"""
     Generate {req.variants} short, engaging ads for a {req.service} business 
     in {req.target_city} with a minimum project budget of ${req.min_project_budget}.
     Use a {req.tone} tone.
     Include hashtags: {req.hashtags}.
     End each with a call to action: {req.call_to_action}.
+    Return the ads as numbered bullets.
     """
-    
-    response = openai.ChatCompletion.create(
+
+    completion = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}]
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
     )
-    
-    ads = response.choices[0].message["content"].strip()
-    return {"ads": ads}
+
+    ads_text = completion.choices[0].message.content.strip()
+    return {"ads": ads_text}
