@@ -1,23 +1,17 @@
-from fastapi import FastAPI
-
-app = FastAPI()
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
-from fastapi import FastAPI
+ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 import os
-import openai
+from openai import OpenAI
 
-app = FastAPI()
+app = FastAPI(title="ProconAI API")
 
-# Health Check
+# ----- Health -----
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-# Define the Ad Request model
+# ----- Schema -----
 class AdRequest(BaseModel):
     service: str
     target_city: str
@@ -27,30 +21,36 @@ class AdRequest(BaseModel):
     hashtags: bool = True
     call_to_action: str = "Contact us today!"
 
-# Create the ad generation endpoint
-@app.post("/ads/generate")
-async def generate_ads(req: AdRequest):
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return {"error": "OPENAI_API_KEY not set in environment"}
-    
-    from openai import OpenAI
-    client = OpenAI(api_key=api_key)
+# ----- OpenAI client -----
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    prompt = f"""
-    Generate {req.variants} short, engaging ads for a {req.service} business 
-    in {req.target_city} with a minimum project budget of ${req.min_project_budget}.
-    Use a {req.tone} tone.
-    Include hashtags: {req.hashtags}.
-    End each with a call to action: {req.call_to_action}.
-    Return the ads as numbered bullets.
-    """
+# ----- Ad generator -----
+@app.post("/ads/generate")
+def generate_ads(req: AdRequest):
+    if not os.getenv("OPENAI_API_KEY"):
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured")
+
+    system = (
+        "You write concise, premium ad copy for a high-end remodeler in Bonita Springs, FL."
+        " Each variant should have a short headline and 1–2 sentence body. Keep it classy."
+    )
+
+    user = (
+        f"Generate {req.variants} distinct ad variants for {req.service} in {req.target_city}. "
+        f"Tone: {req.tone}. Minimum project budget implied: ${req.min_project_budget}+."
+        f" Call to action: {req.call_to_action}. "
+        f"Include tasteful hashtags: {req.hashtags}. Return as numbered bullets."
+    )
 
     completion = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
     )
 
-    ads_text = completion.choices[0].message.content.strip()
-    return {"ads": ads_text}
+    text = (completion.choices[0].message.content or "").strip()
+    return {"ads": text}
+    
