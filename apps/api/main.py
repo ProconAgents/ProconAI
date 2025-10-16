@@ -45,39 +45,49 @@ class AdRequest(BaseModel):
     tone: str | None = "friendly"
 
 @app.post("/ads/generate")
-async def ads_generate(request: Request):
+# put these imports near the top if not present
+from fastapi import HTTPException, Request
+from pydantic import BaseModel
+from openai import OpenAI
+import traceback, logging
+
+logger = logging.getLogger("uvicorn.error")
+client = OpenAI()  # uses env OPENAI_API_KEY / OPENAI_PROJECT
+
+class AdRequest(BaseModel):
+    product: str
+    tone: str | None = "friendly"
+
+@app.post("/ads/generate", response_model=dict)
+async def ads_generate(req: AdRequest):
     """
-    Accepts:
-      1) JSON: {"product": "...", "tone": "friendly"}
-      2) Query: /ads/generate?product=...
-    Returns: {"ok": true, "text": "..."}
+    JSON body:
+    {
+      "product": "ProconAI",
+      "tone": "confident"
+    }
     """
     try:
-        # Try JSON first
-        try:
-            body = await request.json()
-        except Exception:
-            body = None
+        prompt = f"Write a {req.tone or 'friendly'} 50-word ad for {req.product}."
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a concise creative ad generator."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.7,
+            max_tokens=180,
+        )
+        text = resp.choices[0].message.content
+        return {"ok": True, "text": text}
+    except Exception as e:
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
-        product = None
-        tone = "friendly"
-
-        if isinstance(body, dict):
-            product = body.get("product") or body.get("prompt") or body.get("text")
-            tone = body.get("tone") or tone
-
-        # Fallback to query string
-        if not product:
-            product = request.query_params.get("product")
-        if request.query_params.get("tone"):
-            tone = request.query_params.get("tone")
-
-        if not product:
-            raise HTTPException(
-                status_code=422,
-                detail="Missing 'product'. Send JSON {'product': '...','tone':'...'} or use ?product= query param."
-            )
-
+# (optional) allow simple GET links too
+@app.get("/ads/generate", response_model=dict)
+async def ads_generate_get(product: str, tone: str = "friendly"):
+    try:
         prompt = f"Write a {tone or 'friendly'} 50-word ad for {product}."
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -90,14 +100,9 @@ async def ads_generate(request: Request):
         )
         text = resp.choices[0].message.content
         return {"ok": True, "text": text}
-
-    except HTTPException:
-        raise
     except Exception as e:
-        tb = traceback.format_exc()
-        logger.error(tb)
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail={"error": str(e)})
-
 
 @app.get("/health")
 def health():
