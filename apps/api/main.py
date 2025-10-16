@@ -32,29 +32,53 @@ class AdRequest(BaseModel):
     product: str
     tone: str | None = "friendly"
 
-@app.post("/ads/generate2")
-async def ads_generate2(req: AdRequest):
-    import os, traceback
-    debug = {}
+from fastapi import HTTPException, Request
+from pydantic import BaseModel
+from openai import OpenAI
+import traceback, logging
 
-    # 1) Import SDK
+logger = logging.getLogger("uvicorn.error")
+client = OpenAI()  # uses env OPENAI_API_KEY / OPENAI_PROJECT
+
+class AdRequest(BaseModel):
+    product: str
+    tone: str | None = "friendly"
+
+@app.post("/ads/generate")
+async def ads_generate(request: Request):
+    """
+    Accepts:
+      1) JSON: {"product": "...", "tone": "friendly"}
+      2) Query: /ads/generate?product=...
+    Returns: {"ok": true, "text": "..."}
+    """
     try:
-        from openai import OpenAI
-        debug["sdk_imported"] = True
-    except Exception as e:
-        debug["sdk_import_error"] = str(e)
-        raise HTTPException(status_code=500, detail={"error": "Failed to import OpenAI SDK", "debug": debug})
+        # Try JSON first
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
 
-    # 2) Check API key
-    api_key = os.getenv("OPENAI_API_KEY")
-    debug["api_key_found"] = bool(api_key)
-    if not api_key:
-        raise HTTPException(status_code=500, detail={"error": "OPENAI_API_KEY not set in environment", "debug": debug})
+        product = None
+        tone = "friendly"
 
-    # 3) Call OpenAI
-    try:
-        client = OpenAI(api_key=api_key)
-        prompt = f"Write a {req.tone or 'friendly'} 50-word ad for {req.product}."
+        if isinstance(body, dict):
+            product = body.get("product") or body.get("prompt") or body.get("text")
+            tone = body.get("tone") or tone
+
+        # Fallback to query string
+        if not product:
+            product = request.query_params.get("product")
+        if request.query_params.get("tone"):
+            tone = request.query_params.get("tone")
+
+        if not product:
+            raise HTTPException(
+                status_code=422,
+                detail="Missing 'product'. Send JSON {'product': '...','tone':'...'} or use ?product= query param."
+            )
+
+        prompt = f"Write a {tone or 'friendly'} 50-word ad for {product}."
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -65,11 +89,14 @@ async def ads_generate2(req: AdRequest):
             max_tokens=180,
         )
         text = resp.choices[0].message.content
-        return {"ok": True, "text": text, "debug": debug}
+        return {"ok": True, "text": text}
+
+    except HTTPException:
+        raise
     except Exception as e:
         tb = traceback.format_exc()
-        print(tb)  # sends full traceback to Railway logs
-        raise HTTPException(status_code=500, detail={"error": str(e), "traceback": tb, "debug": debug})
+        logger.error(tb)
+        raise HTTPException(status_code=500, detail={"error": str(e)})
 
 
 @app.get("/health")
